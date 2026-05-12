@@ -4,13 +4,15 @@ const { ScramjetServiceWorker } = $scramjetLoadWorker();
 const sj = new ScramjetServiceWorker();
 
 self.addEventListener("fetch", (event) => {
-  event.respondWith(async () => {
-    await sj.loadConfig();
-    if (sj.route(event)) {
-      return sj.fetch(event);
-    }
-    return fetch(event.request);
-  });
+  event.respondWith(
+    (async () => {
+      await sj.loadConfig();
+      if (sj.route(event)) {
+        return await sj.fetch(event);
+      }
+      return await fetch(event.request);
+    })()
+  );
 });
 
 self.addEventListener("install",  ()  => self.skipWaiting());
