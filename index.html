@@ -129,7 +129,7 @@
   <div id="overlay">
     <h1>🚀 Scramjet</h1>
     <ul id="steps">
-      <li id="s-sw"        class="pending"><span class="icon">⬜</span><span>Register service worker (/sw.js)</span></li>
+      <li id="s-sw"        class="pending"><span class="icon">⬜</span><span>Register service worker (/assets/sw.js)</span></li>
       <li id="s-ctrl"      class="pending"><span class="icon">⬜</span><span>Load ScramjetController</span></li>
       <li id="s-bm"        class="pending"><span class="icon">⬜</span><span>Load BareMux</span></li>
       <li id="s-init"      class="pending"><span class="icon">⬜</span><span>scramjet.init()</span></li>
@@ -156,10 +156,9 @@ const BM_WORKER     = BM + "worker.js";
 const EP_MODULE     = EP + "index.mjs";
 const WISP          = "wss://wisp.mercurywork.shop/";
 
-// assets/ IS the repo root, so GitHub Pages serves it at /
-// Therefore sw.js is at /sw.js and the scope is /
-const SW_URL   = "/sw.js";
-const SW_SCOPE = "/";
+// The page is at /assets/, so SW must be /assets/sw.js with scope /assets/
+const SW_URL   = "/assets/sw.js";
+const SW_SCOPE = "/assets/";
 
 // ── Step UI ───────────────────────────────────────────────────────────────────
 const STEP_IDS = ["s-sw","s-ctrl","s-bm","s-init","s-transport","s-frame"];
@@ -213,7 +212,7 @@ function loadScript(src) {
   }
 
   // ── 1. Register SW ───────────────────────────────────────────────────────
-  stepRunning("s-sw", "Registering " + SW_URL + "…");
+  stepRunning("s-sw", "Registering " + SW_URL + " with scope " + SW_SCOPE + "…");
   try {
     for (const reg of await navigator.serviceWorker.getRegistrations()) {
       await reg.unregister();
@@ -224,8 +223,8 @@ function loadScript(src) {
   } catch (e) {
     stepError("s-sw",
       "SW registration failed: " + e.message + "\n\n" +
-      "Confirm https://dragon-gaming-platforms.github.io/sw.js " +
-      "loads in a new tab before trying again."
+      "Verify that https://dragon-gaming-platforms.github.io/assets/sw.js " +
+      "loads correctly in a new tab."
     );
     return;
   }
@@ -260,7 +259,7 @@ function loadScript(src) {
   try {
     const { ScramjetController } = $scramjetLoadController();
     scramjet = new ScramjetController({
-      prefix: "/scramjet/",
+      prefix: "/assets/scramjet/",
       codec: {
         encode: (url) => encodeURIComponent(url),
         decode: (url) => decodeURIComponent(url),
