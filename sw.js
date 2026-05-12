@@ -4,15 +4,16 @@ const { ScramjetServiceWorker } = $scramjetLoadWorker();
 const sj = new ScramjetServiceWorker();
 
 self.addEventListener("fetch", (event) => {
-  event.respondWith(
-    (async () => {
-      await sj.loadConfig();
-      if (sj.route(event)) {
+  // Only intercept if it matches scramjet's route pattern
+  if (sj.route(event)) {
+    event.respondWith(
+      (async () => {
+        await sj.loadConfig();
         return await sj.fetch(event);
-      }
-      return await fetch(event.request);
-    })()
-  );
+      })()
+    );
+  }
+  // Otherwise let the request pass through normally (don't call respondWith)
 });
 
 self.addEventListener("install",  ()  => self.skipWaiting());
