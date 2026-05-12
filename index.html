@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<!-- This is a single-file scramjet implementation -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scramjet Proxy</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f0f13;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #1a1a24;
+      border-bottom: 1px solid #2e2e40;
+      flex-shrink: 0;
+    }
+    #toolbar button {
+      background: #2e2e40;
+      border: none;
+      color: #e0e0e0;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    #toolbar button:hover { background: #3e3e58; }
+    #go-btn { background: #5050b0 !important; }
+    #go-btn:hover { background: #6060c0 !important; }
+    #url-input {
+      flex: 1;
+      padding: 7px 12px;
+      border-radius: 6px;
+      border: 1px solid #2e2e40;
+      background: #0f0f13;
+      color: #e0e0e0;
+      font-size: 14px;
+      outline: none;
+      min-width: 0;
+    }
+    #url-input:focus { border-color: #6060c0; }
+
+    #frame-container {
+      flex: 1;
+      position: relative;
+    }
+    #frame-container iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* Overlay */
+    #overlay {
+      position: absolute;
+      inset: 0;
+      background: #0f0f13;
+      z-index: 99;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 24px;
+    }
+    #overlay h1 { font-size: 1.8rem; color: #8080e0; }
+
+    /* Step list */
+    #steps {
+      list-style: none;
+      width: 100%;
+      max-width: 540px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #steps li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #1a1a24;
+      font-size: 13px;
+      border: 1px solid #2e2e40;
+    }
+    #steps li .icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+    #steps li.pending  { color: #666; }
+    #steps li.running  { color: #aac; border-color: #5050a0; background: #15152a; }
+    #steps li.done     { color: #7c7; border-color: #307030; background: #101a10; }
+    #steps li.error    { color: #f88; border-color: #802020; background: #1e0808; white-space: pre-wrap; word-break: break-word; }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid #444;
+      border-top-color: #9090e0;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button id="back-btn">&#8592;</button>
+  <button id="fwd-btn">&#8594;</button>
+  <button id="reload-btn">&#8635;</button>
+  <input id="url-input" type="text" placeholder="https://example.com" />
+  <button id="go-btn">Go</button>
+</div>
+
+<div id="frame-container">
+  <div id="overlay">
+    <h1>🚀 Scramjet</h1>
+    <ul id="steps">
+      <li id="s-sw"         class="pending"><span class="icon">⬜</span><span>Register service worker</span></li>
+      <li id="s-controller" class="pending"><span class="icon">⬜</span><span>Load ScramjetController</span></li>
+      <li id="s-baremux"    class="pending"><span class="icon">⬜</span><span>Load BareMux</span></li>
+      <li id="s-init"       class="pending"><span class="icon">⬜</span><span>scramjet.init()</span></li>
+      <li id="s-transport"  class="pending"><span class="icon">⬜</span><span>Connect Epoxy/Wisp transport</span></li>
+      <li id="s-frame"      class="pending"><span class="icon">⬜</span><span>Create proxied frame</span></li>
+    </ul>
+  </div>
+  <!-- Scramjet injects its own <iframe> here -->
+</div>
+
+<script>
+"use strict";
+
+// ─── Absolute CDN URLs ────────────────────────────────────────────────────────
+const SJ   = "https://cdn.jsdelivr.net/npm/@mercuryworkshop/scramjet@2.0.0-alpha/dist/";
+const BM   = "https://cdn.jsdelivr.net/npm/@mercuryworkshop/bare-mux@2/dist/";
+const EP   = "https://cdn.jsdelivr.net/npm/@mercuryworkshop/epoxy-transport@2/dist/";
+
+const SJ_CONTROLLER = SJ + "scramjet.controller.js";
+const SJ_ALL        = SJ + "scramjet.all.js";
+const SJ_SYNC       = SJ + "scramjet.sync.js";
+const SJ_WASM       = SJ + "scramjet.wasm.wasm";
+const BM_CLIENT     = BM + "bare-mux.js";
+const BM_WORKER     = BM + "worker.js";
+const EP_MODULE     = EP + "index.mjs";
+const WISP          = "wss://wisp.mercurywork.shop/";
+
+// ─── Step UI helpers ──────────────────────────────────────────────────────────
+function stepRunning(id, msg) {
+  const li = document.getElementById(id);
+  li.className = "running";
+  li.innerHTML = `<span class="spinner"></span><span>${msg || li.querySelector("span:last-child").textContent}</span>`;
+}
+function stepDone(id, msg) {
+  const li = document.getElementById(id);
+  li.className = "done";
+  li.innerHTML = `<span class="icon">✅</span><span>${msg || li.querySelector("span:last-child").textContent}</span>`;
+}
+function stepError(id, msg) {
+  const li = document.getElementById(id);
+  li.className = "error";
+  li.innerHTML = `<span class="icon">❌</span><span>${msg}</span>`;
+  // Mark remaining steps as cancelled
+  const all = ["s-sw","s-controller","s-baremux","s-init","s-transport","s-frame"];
+  const idx = all.indexOf(id);
+  for (let i = idx + 1; i < all.length; i++) {
+    const s = document.getElementById(all[i]);
+    if (s.className === "pending") {
+      s.className = "error";
+      s.innerHTML = `<span class="icon">⏭</span><span>Skipped</span>`;
+    }
+  }
+  throw new Error(msg); // halt the async chain
+}
+
+// ─── Script loader ────────────────────────────────────────────────────────────
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src; s.crossOrigin = "anonymous";
+    s.onload = res;
+    s.onerror = () => rej(new Error("Failed to fetch: " + src));
+    document.head.appendChild(s);
+  });
+}
+
+// ─── SW source (built with absolute CDN importScripts URL) ───────────────────
+//
+//  CRITICAL FIX: event.respondWith() receives an async arrow function,
+//  not the result of calling one. This matches the canonical TN/official docs pattern.
+//
+const SW_SRC = `
+importScripts(${JSON.stringify(SJ_ALL)});
+
+const { ScramjetServiceWorker } = $scramjetLoadWorker();
+const sj = new ScramjetServiceWorker();
+
+self.addEventListener("fetch", (event) => {
+  event.respondWith(async () => {
+    await sj.loadConfig();
+    if (sj.route(event)) {
+      return sj.fetch(event);
+    }
+    return fetch(event.request);
+  });
+});
+
+self.addEventListener("install",  ()  => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+`;
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+(async () => {
+  // Guard
+  if (!("serviceWorker" in navigator)) {
+    stepError("s-sw",
+      "Service Workers not available.\n" +
+      "Use Chrome/Edge on HTTPS or localhost.\n" +
+      "Firefox blocks blob:-URL service workers."
+    );
+    return;
+  }
+
+  // ── Step 1: Register SW ───────────────────────────────────────────────────
+  stepRunning("s-sw", "Registering service worker from blob URL…");
+  let swReg;
+  try {
+    const blob    = new Blob([SW_SRC], { type: "application/javascript" });
+    const blobUrl = URL.createObjectURL(blob);
+    swReg = await navigator.serviceWorker.register(blobUrl, { scope: "/" });
+    await navigator.serviceWorker.ready;
+    stepDone("s-sw", "Service worker active (" + (swReg.active?.scriptURL ?? "blob") + ")");
+  } catch (e) {
+    stepError("s-sw",
+      "SW registration failed: " + e.message + "\n\n" +
+      "Blob-URL service workers require HTTPS or localhost, and Chrome/Edge.\n" +
+      "Firefox does NOT support blob: SW registration at all."
+    );
+    return;
+  }
+
+  // ── Step 2: Load controller script ───────────────────────────────────────
+  stepRunning("s-controller", "Loading " + SJ_CONTROLLER + "…");
+  try {
+    await loadScript(SJ_CONTROLLER);
+    if (typeof $scramjetLoadController !== "function")
+      throw new Error("$scramjetLoadController not defined after script load");
+    stepDone("s-controller", "scramjet.controller.js loaded ✓");
+  } catch (e) {
+    stepError("s-controller", "Controller load failed: " + e.message);
+    return;
+  }
+
+  // ── Step 3: Load bare-mux client ─────────────────────────────────────────
+  stepRunning("s-baremux", "Loading " + BM_CLIENT + "…");
+  try {
+    await loadScript(BM_CLIENT);
+    if (typeof BareMux === "undefined")
+      throw new Error("BareMux not defined after script load");
+    stepDone("s-baremux", "bare-mux.js loaded ✓");
+  } catch (e) {
+    stepError("s-baremux", "BareMux load failed: " + e.message);
+    return;
+  }
+
+  // ── Step 4: scramjet.init() ───────────────────────────────────────────────
+  stepRunning("s-init", "Constructing ScramjetController and calling init()…");
+  let scramjet;
+  try {
+    const { ScramjetController } = $scramjetLoadController();
+    scramjet = new ScramjetController({
+      prefix: "/scramjet/",
+      codec: {
+        encode: (url) => encodeURIComponent(url),
+        decode: (url) => decodeURIComponent(url),
+      },
+      files: {
+        wasm: SJ_WASM,
+        all:  SJ_ALL,
+        sync: SJ_SYNC,
+      },
+      flags: {
+        captureErrors:  true,
+        strictRewrites: false,
+      },
+    });
+    await scramjet.init();
+    stepDone("s-init", "ScramjetController ready ✓");
+  } catch (e) {
+    stepError("s-init", "scramjet.init() failed: " + e.message + "\n" + (e.stack || ""));
+    return;
+  }
+
+  // ── Step 5: Set BareMux transport ─────────────────────────────────────────
+  stepRunning("s-transport", "Connecting Epoxy transport → " + WISP + "…");
+  try {
+    const conn = new BareMux.BareMuxConnection(BM_WORKER);
+    await conn.setTransport(EP_MODULE, [{ wisp: WISP }]);
+    stepDone("s-transport", "Epoxy/Wisp transport connected ✓");
+  } catch (e) {
+    // Non-fatal: log and continue; direct fetch fallback may work
+    const li = document.getElementById("s-transport");
+    li.className = "error";
+    li.innerHTML = `<span class="icon">⚠️</span><span>Transport warning (non-fatal): ${e.message}</span>`;
+    console.warn("[sj] transport error (non-fatal):", e);
+  }
+
+  // ── Step 6: Create the proxied frame ─────────────────────────────────────
+  stepRunning("s-frame", "Creating proxied iframe…");
+  let frame;
+  try {
+    // createFrame() with no args creates a fresh <iframe>; we append frame.frame
+    frame = scramjet.createFrame();
+    const container = document.getElementById("frame-container");
+    container.appendChild(frame.frame);
+
+    // Style the injected iframe to fill the container
+    Object.assign(frame.frame.style, {
+      position: "absolute",
+      inset: "0",
+      width: "100%",
+      height: "100%",
+      border: "none",
+    });
+
+    stepDone("s-frame", "Frame ready ✓");
+  } catch (e) {
+    stepError("s-frame", "createFrame() failed: " + e.message);
+    return;
+  }
+
+  // Hide overlay — we are fully ready
+  document.getElementById("overlay").style.display = "none";
+
+  // ── Navigation ────────────────────────────────────────────────────────────
+  const urlInput = document.getElementById("url-input");
+
+  function navigate(raw) {
+    let url = raw.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+    urlInput.value = url;
+    // frame.navigate() is the correct method per the Scramjet docs
+    frame.navigate(url);
+  }
+
+  // Reflect the current proxied URL back to the address bar
+  frame.frame.addEventListener("load", () => {
+    try {
+      // frame.url is a URL object of the currently proxied page
+      if (frame.url && frame.url.href && frame.url.href !== "about:blank") {
+        urlInput.value = frame.url.href;
+      }
+    } catch (_) {}
+  });
+
+  document.getElementById("go-btn").addEventListener("click", () => navigate(urlInput.value));
+  urlInput.addEventListener("keydown", (e) => { if (e.key === "Enter") navigate(urlInput.value); });
+  document.getElementById("back-btn").addEventListener("click",   () => { try { frame.back();    } catch(_){} });
+  document.getElementById("fwd-btn").addEventListener("click",    () => { try { frame.forward(); } catch(_){} });
+  document.getElementById("reload-btn").addEventListener("click", () => { try { frame.reload();  } catch(_){} });
+
+  // Navigate to a sensible default
+  navigate("https://example.com");
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+<script>eruda.init();</script>
+</body>
+</html>
