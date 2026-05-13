@@ -38,6 +38,8 @@
     #toolbar button:hover { background: #3e3e58; }
     #go-btn { background: #5050b0 !important; }
     #go-btn:hover { background: #6060c0 !important; }
+    #reset-sw-btn { background: #b05050 !important; font-size: 12px; padding: 5px 8px; }
+    #reset-sw-btn:hover { background: #c06060 !important; }
     #url-input {
       flex: 1;
       padding: 7px 12px;
@@ -50,6 +52,22 @@
       min-width: 0;
     }
     #url-input:focus { border-color: #6060c0; }
+
+    #debug-log {
+      padding: 8px 12px;
+      background: #13131b;
+      border-bottom: 1px solid #2e2e40;
+      font-size: 11px;
+      font-family: monospace;
+      color: #888;
+      max-height: 120px;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+    #debug-log div { margin: 2px 0; }
+    #debug-log .error { color: #f88; }
+    #debug-log .success { color: #7c7; }
+    #debug-log .info { color: #8ac; }
 
     #frame-container {
       flex: 1;
@@ -76,6 +94,7 @@
       padding: 24px;
     }
     #overlay h1 { font-size: 1.8rem; color: #8080e0; }
+    #version { font-size: 11px; color: #555; margin-top: -10px; }
 
     #steps {
       list-style: none;
@@ -123,13 +142,19 @@
   <button id="reload-btn">&#8635;</button>
   <input id="url-input" type="text" placeholder="https://example.com" />
   <button id="go-btn">Go</button>
+  <button id="reset-sw-btn" title="Unregister service worker and reload">Reset SW</button>
+</div>
+
+<div id="debug-log">
+  <div class="info">Debug log (version 2025-01-XX-03):</div>
 </div>
 
 <div id="frame-container">
   <div id="overlay">
     <h1>🚀 Scramjet</h1>
+    <div id="version">Loading v2025-01-XX-03...</div>
     <ul id="steps">
-      <li id="s-sw"        class="pending"><span class="icon">⬜</span><span>Register service worker (/assets/sw.js)</span></li>
+      <li id="s-sw"        class="pending"><span class="icon">⬜</span><span>Register service worker</span></li>
       <li id="s-ctrl"      class="pending"><span class="icon">⬜</span><span>Load ScramjetController</span></li>
       <li id="s-bm"        class="pending"><span class="icon">⬜</span><span>Load BareMux</span></li>
       <li id="s-init"      class="pending"><span class="icon">⬜</span><span>scramjet.init()</span></li>
@@ -142,7 +167,38 @@
 <script>
 "use strict";
 
-// ── Absolute CDN URLs ─────────────────────────────────────────────────────────
+// ── Visible logging ───────────────────────────────────────────────────────────
+const debugLog = document.getElementById("debug-log");
+function log(msg, type = 'info') {
+  const div = document.createElement('div');
+  div.className = type;
+  div.textContent = new Date().toLocaleTimeString() + ' - ' + msg;
+  debugLog.appendChild(div);
+  debugLog.scrollTop = debugLog.scrollHeight;
+  console.log('[Page]', msg);
+}
+
+log('JavaScript started', 'success');
+
+// ── Reset SW button ───────────────────────────────────────────────────────────
+document.getElementById("reset-sw-btn").addEventListener("click", async () => {
+  log('Reset SW button clicked', 'info');
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    log('Found ' + regs.length + ' SW registrations', 'info');
+    for (const reg of regs) {
+      await reg.unregister();
+      log('Unregistered: ' + reg.scope, 'success');
+    }
+    alert('Service worker cleared. Reloading...');
+    location.reload();
+  } catch (e) {
+    log('Reset SW error: ' + e.message, 'error');
+    alert('Error: ' + e.message);
+  }
+});
+
+// ── CDN URLs ──────────────────────────────────────────────────────────────────
 const SJ  = "https://cdn.jsdelivr.net/npm/@mercuryworkshop/scramjet@2.0.0-alpha/dist/";
 const BM  = "https://cdn.jsdelivr.net/npm/@mercuryworkshop/bare-mux@2/dist/";
 const EP  = "https://cdn.jsdelivr.net/npm/@mercuryworkshop/epoxy-transport@2/dist/";
@@ -156,9 +212,10 @@ const BM_WORKER     = BM + "worker.js";
 const EP_MODULE     = EP + "index.mjs";
 const WISP          = "wss://wisp.mercurywork.shop/";
 
-// The page is at /assets/, so SW must be /assets/sw.js with scope /assets/
 const SW_URL   = "/assets/sw.js";
 const SW_SCOPE = "/assets/";
+
+log('Constants loaded', 'success');
 
 // ── Step UI ───────────────────────────────────────────────────────────────────
 const STEP_IDS = ["s-sw","s-ctrl","s-bm","s-init","s-transport","s-frame"];
@@ -167,21 +224,25 @@ function stepRunning(id, msg) {
   const li = document.getElementById(id);
   li.className = "running";
   li.innerHTML = `<span class="spinner"></span><span>${msg}</span>`;
+  log('STEP: ' + id + ' - ' + msg, 'info');
 }
 function stepDone(id, msg) {
   const li = document.getElementById(id);
   li.className = "done";
   li.innerHTML = `<span class="icon">✅</span><span>${msg}</span>`;
+  log('DONE: ' + id + ' - ' + msg, 'success');
 }
 function stepWarn(id, msg) {
   const li = document.getElementById(id);
   li.className = "warn";
   li.innerHTML = `<span class="icon">⚠️</span><span>${msg}</span>`;
+  log('WARN: ' + id + ' - ' + msg, 'info');
 }
 function stepError(id, msg) {
   const li = document.getElementById(id);
   li.className = "error";
   li.innerHTML = `<span class="icon">❌</span><span>${msg}</span>`;
+  log('ERROR: ' + id + ' - ' + msg, 'error');
   const idx = STEP_IDS.indexOf(id);
   for (let i = idx + 1; i < STEP_IDS.length; i++) {
     const s = document.getElementById(STEP_IDS[i]);
@@ -193,12 +254,17 @@ function stepError(id, msg) {
 }
 
 function loadScript(src) {
+  log('Loading: ' + src, 'info');
   return new Promise((res, rej) => {
     const s = document.createElement("script");
     s.src = src;
     s.crossOrigin = "anonymous";
-    s.onload  = res;
-    s.onerror = () => rej(new Error("Failed to fetch: " + src));
+    s.onload  = () => { log('Loaded: ' + src, 'success'); res(); };
+    s.onerror = () => { 
+      const err = new Error("Failed: " + src);
+      log('FAILED: ' + src, 'error');
+      rej(err);
+    };
     document.head.appendChild(s);
   });
 }
@@ -206,58 +272,79 @@ function loadScript(src) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 (async () => {
 
+  log('Main function started', 'info');
+
   if (!("serviceWorker" in navigator)) {
-    stepError("s-sw", "Service Workers not supported in this browser/context.");
+    stepError("s-sw", "Service Workers not supported");
     return;
   }
+
+  log('Service Worker API available', 'success');
 
   // ── 1. Register SW ───────────────────────────────────────────────────────
-  stepRunning("s-sw", "Registering " + SW_URL + " with scope " + SW_SCOPE + "…");
+  stepRunning("s-sw", "Registering " + SW_URL + "…");
   try {
-    for (const reg of await navigator.serviceWorker.getRegistrations()) {
+    log('Getting existing SW registrations...', 'info');
+    const regs = await navigator.serviceWorker.getRegistrations();
+    log('Found ' + regs.length + ' existing registrations', 'info');
+    
+    for (const reg of regs) {
+      log('Unregistering: ' + reg.scope, 'info');
       await reg.unregister();
     }
-    await navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE });
+    
+    log('Registering new SW: ' + SW_URL, 'info');
+    const reg = await navigator.serviceWorker.register(SW_URL, { 
+      scope: SW_SCOPE, 
+      updateViaCache: 'none' 
+    });
+    log('SW registered, waiting for ready...', 'info');
     await navigator.serviceWorker.ready;
+    log('SW ready!', 'success');
     stepDone("s-sw", "Service worker active ✓");
   } catch (e) {
-    stepError("s-sw",
-      "SW registration failed: " + e.message + "\n\n" +
-      "Verify that https://dragon-gaming-platforms.github.io/assets/sw.js " +
-      "loads correctly in a new tab."
-    );
+    log('SW registration error: ' + e.message, 'error');
+    stepError("s-sw", "SW failed: " + e.message);
     return;
   }
 
-  // ── 2. Load ScramjetController ───────────────────────────────────────────
+  // ── 2. Load Controller ────────────────────────────────────────────────────
   stepRunning("s-ctrl", "Loading scramjet.controller.js…");
   try {
     await loadScript(SJ_CONTROLLER);
-    if (typeof $scramjetLoadController !== "function")
-      throw new Error("$scramjetLoadController not defined after script load");
+    if (typeof $scramjetLoadController !== "function") {
+      throw new Error("$scramjetLoadController undefined");
+    }
+    log('Controller loaded, function available', 'success');
     stepDone("s-ctrl", "scramjet.controller.js ✓");
   } catch (e) {
-    stepError("s-ctrl", "Controller load failed: " + e.message);
+    log('Controller error: ' + e.message, 'error');
+    stepError("s-ctrl", "Controller failed: " + e.message);
     return;
   }
 
-  // ── 3. Load BareMux ──────────────────────────────────────────────────────
+  // ── 3. Load BareMux ───────────────────────────────────────────────────────
   stepRunning("s-bm", "Loading bare-mux.js…");
   try {
     await loadScript(BM_CLIENT);
-    if (typeof BareMux === "undefined")
-      throw new Error("BareMux not defined after script load");
+    if (typeof BareMux === "undefined") {
+      throw new Error("BareMux undefined");
+    }
+    log('BareMux loaded', 'success');
     stepDone("s-bm", "bare-mux.js ✓");
   } catch (e) {
-    stepError("s-bm", "BareMux load failed: " + e.message);
+    log('BareMux error: ' + e.message, 'error');
+    stepError("s-bm", "BareMux failed: " + e.message);
     return;
   }
 
-  // ── 4. scramjet.init() ───────────────────────────────────────────────────
-  stepRunning("s-init", "Constructing ScramjetController and calling init()…");
+  // ── 4. Init scramjet ──────────────────────────────────────────────────────
+  stepRunning("s-init", "Constructing ScramjetController…");
   let scramjet;
   try {
+    log('Calling $scramjetLoadController()...', 'info');
     const { ScramjetController } = $scramjetLoadController();
+    log('Creating controller instance...', 'info');
     scramjet = new ScramjetController({
       prefix: "/assets/scramjet/",
       codec: {
@@ -274,28 +361,36 @@ function loadScript(src) {
         strictRewrites: false,
       },
     });
+    log('Calling scramjet.init()...', 'info');
     await scramjet.init();
+    log('scramjet.init() complete!', 'success');
     stepDone("s-init", "ScramjetController ready ✓");
   } catch (e) {
-    stepError("s-init", "scramjet.init() failed: " + e.message + "\n" + (e.stack ?? ""));
+    log('Init error: ' + e.message, 'error');
+    log('Stack: ' + (e.stack || 'none'), 'error');
+    stepError("s-init", "Init failed: " + e.message);
     return;
   }
 
-  // ── 5. Epoxy/Wisp transport ──────────────────────────────────────────────
-  stepRunning("s-transport", "Connecting Epoxy → " + WISP + "…");
+  // ── 5. Transport ──────────────────────────────────────────────────────────
+  stepRunning("s-transport", "Connecting transport…");
   try {
+    log('Creating BareMuxConnection...', 'info');
     const conn = new BareMux.BareMuxConnection(BM_WORKER);
+    log('Setting transport...', 'info');
     await conn.setTransport(EP_MODULE, [{ wisp: WISP }]);
-    stepDone("s-transport", "Epoxy/Wisp transport connected ✓");
+    log('Transport connected!', 'success');
+    stepDone("s-transport", "Epoxy/Wisp ✓");
   } catch (e) {
+    log('Transport warning: ' + e.message, 'info');
     stepWarn("s-transport", "Transport warning (non-fatal): " + e.message);
-    console.warn("[sj] transport:", e);
   }
 
-  // ── 6. Create proxied frame ──────────────────────────────────────────────
+  // ── 6. Create frame ───────────────────────────────────────────────────────
   stepRunning("s-frame", "Creating proxied iframe…");
   let frame;
   try {
+    log('Creating frame...', 'info');
     frame = scramjet.createFrame();
     const container = document.getElementById("frame-container");
     container.appendChild(frame.frame);
@@ -303,14 +398,17 @@ function loadScript(src) {
       position: "absolute", inset: "0",
       width: "100%", height: "100%", border: "none",
     });
+    log('Frame created and appended!', 'success');
     stepDone("s-frame", "Frame ready ✓");
   } catch (e) {
-    stepError("s-frame", "createFrame() failed: " + e.message);
+    log('Frame error: ' + e.message, 'error');
+    stepError("s-frame", "Frame failed: " + e.message);
     return;
   }
 
   // Hide overlay
   document.getElementById("overlay").style.display = "none";
+  log('Init complete - overlay hidden', 'success');
 
   // ── Navigation ────────────────────────────────────────────────────────────
   const urlInput = document.getElementById("url-input");
@@ -320,6 +418,7 @@ function loadScript(src) {
     if (!url) return;
     if (!/^https?:\/\//i.test(url)) url = "https://" + url;
     urlInput.value = url;
+    log('Navigating to: ' + url, 'info');
     frame.navigate(url);
   }
 
@@ -327,6 +426,7 @@ function loadScript(src) {
     try {
       if (frame.url?.href && frame.url.href !== "about:blank") {
         urlInput.value = frame.url.href;
+        log('Frame loaded: ' + frame.url.href, 'success');
       }
     } catch (_) {}
   });
@@ -338,10 +438,10 @@ function loadScript(src) {
   document.getElementById("reload-btn").addEventListener("click", () => { try { frame.reload();  } catch(_){} });
 
   navigate("https://example.com");
+  log('Auto-navigation started', 'info');
 })();
+
+log('Script end reached', 'info');
 </script>
-<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-<script>eruda.init();</script>
 </body>
 </html>
-
