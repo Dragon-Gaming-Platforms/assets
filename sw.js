@@ -4,29 +4,22 @@ const { ScramjetServiceWorker } = $scramjetLoadWorker();
 const sj = new ScramjetServiceWorker();
 
 self.addEventListener("fetch", (event) => {
-  event.respondWith(
-    (async () => {
-      try {
-        // Load config if available; if not initialized yet, just continue
-        try {
-          await sj.loadConfig();
-        } catch (configError) {
-          // Config not available yet - that's fine for non-scramjet requests
-        }
-
-        // Check if this request is a scramjet proxy request
+  // Only intercept requests that contain the scramjet prefix in the URL
+  // All other requests (CDN scripts, images, etc.) pass through untouched
+  if (event.request.url.includes('/assets/scramjet/')) {
+    event.respondWith(
+      (async () => {
+        await sj.loadConfig();
         if (sj.route(event)) {
           return await sj.fetch(event);
         }
-      } catch (err) {
-        // If anything goes wrong, fall back to normal fetch
-        console.error('[SW] Scramjet error:', err);
-      }
-
-      // Default: normal fetch for all non-scramjet requests
-      return await fetch(event.request);
-    })()
-  );
+        // If route check fails for some reason, fall back
+        return await fetch(event.request);
+      })()
+    );
+  }
+  // If the URL doesn't contain the scramjet prefix, do nothing - 
+  // the browser will fetch it normally
 });
 
 self.addEventListener("install",  ()  => self.skipWaiting());
